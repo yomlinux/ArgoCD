@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: test-app-1
+  namespace: argocd
+spec:
+  project: dnixx-apps     # Project name in ArgoCD . Make it project base or application base. 
+  source:
+    repoURL: https://github.com/yomlinux/Pipeline.git
+    targetRevision: HEAD
+    path: registration-app  # Replace this with the relative path to the desired directory
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dnixx-apps
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+
