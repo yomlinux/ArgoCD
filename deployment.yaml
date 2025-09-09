@@ -47,7 +47,7 @@ spec:
       app: argocd
       type: nfs
 ---
-# ArgoCD Required Secrets
+# ArgoCD Required Secrets (no pre-set password)
 apiVersion: v1
 kind: Secret
 metadata:
@@ -58,9 +58,6 @@ metadata:
     app.kubernetes.io/part-of: argocd
 type: Opaque
 data:
-  # Default admin password: admin123
-  admin.password: YWRtaW4xMjM=
-  # Random secret keys for server
   server.secretkey: c2VjcmV0LWtleS1mb3ItYXJnb2NkLXNlcnZlci0xMjM0NTY3ODkw
   server.secret: c2VjcmV0LWZvci1hcmdvY2Qtc2VydmVyLWF1dGgxMjM0NTY3OA==
 ---
@@ -118,7 +115,7 @@ data:
   service.webhook.argocd: |
     url: https://localhost:8080
 ---
-# ArgoCD Custom Resource Definitions (CRDs) - Required for AppProjects
+# CRDs
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -170,7 +167,7 @@ spec:
         type: object
         x-kubernetes-preserve-unknown-fields: true
 ---
-# Service Account with proper permissions
+# ServiceAccount & RBAC
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -180,7 +177,6 @@ metadata:
     app.kubernetes.io/name: argocd-server
     app.kubernetes.io/part-of: argocd
 ---
-# Cluster Role for ArgoCD permissions
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -196,7 +192,6 @@ rules:
   resources: ["applications", "appprojects"]
   verbs: ["*"]
 ---
-# Cluster Role Binding
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -213,7 +208,6 @@ roleRef:
   name: argocd-server
   apiGroup: rbac.authorization.k8s.io
 ---
-# Role for namespace-specific permissions
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -233,7 +227,6 @@ rules:
   resources: ["applications", "appprojects"]
   verbs: ["*"]
 ---
-# Role Binding
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -251,6 +244,7 @@ roleRef:
   name: argocd-server
   apiGroup: rbac.authorization.k8s.io
 ---
+# PostgreSQL Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -283,9 +277,8 @@ spec:
             echo "Initializing NFS directory permissions..."
             chown -R 999:999 /var/lib/postgresql/data
             chmod -R 750 /var/lib/postgresql/data
-            echo "Directory contents:"
             ls -la /var/lib/postgresql/data/
-            echo "Permissions set successfully!"
+            echo "Directory ready"
         volumeMounts:
         - name: postgresql-storage
           mountPath: /var/lib/postgresql/data
@@ -301,8 +294,6 @@ spec:
           value: argocd
         - name: PGDATA
           value: /var/lib/postgresql/data/pgdata
-        - name: LANG
-          value: en_US.utf8
         ports:
         - containerPort: 5432
         volumeMounts:
@@ -317,19 +308,13 @@ spec:
             cpu: "500m"
         livenessProbe:
           exec:
-            command:
-            - sh
-            - -c
-            - exec pg_isready -U argocd -h 127.0.0.1 -p 5432
+            command: ["sh", "-c", "exec pg_isready -U argocd -h 127.0.0.1 -p 5432"]
           initialDelaySeconds: 60
           periodSeconds: 10
           timeoutSeconds: 5
         readinessProbe:
           exec:
-            command:
-            - sh
-            - -c
-            - exec pg_isready -U argocd -h 127.0.0.1 -p 5432
+            command: ["sh", "-c", "exec pg_isready -U argocd -h 127.0.0.1 -p 5432"]
           initialDelaySeconds: 10
           periodSeconds: 10
           timeoutSeconds: 5
@@ -355,6 +340,7 @@ spec:
     protocol: TCP
   type: ClusterIP
 ---
+# ArgoCD Server Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -372,7 +358,18 @@ spec:
       labels:
         app: argocd-server
     spec:
-      serviceAccountName: argocd-server  # Use the dedicated service account
+      serviceAccountName: argocd-server
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:13-alpine
+        command:
+          - sh
+          - -c
+          - |
+            until pg_isready -h argocd-postgresql -p 5432 -U argocd; do
+              echo "Waiting for PostgreSQL..."
+              sleep 5
+            done
       containers:
       - name: argocd-server
         image: argoproj/argocd:latest
@@ -436,3 +433,4 @@ spec:
     port: 443
     targetPort: 8081
   type: NodePort
+
